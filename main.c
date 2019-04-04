@@ -16,6 +16,7 @@ unsigned char Packet[5];
 unsigned short tempc;
 unsigned short humid;
 int pass = 0;
+float light = 0;
 
 void initTime1(void);
 void initTime2(void);
@@ -32,7 +33,7 @@ void GLCD_command_write(unsigned char data);
 void GLCD_putchar(int c);
 void SPI_init(void);
 void SPI_write(unsigned char data);
-void displayHT(unsigned short humid, unsigned short tempc);
+void displayHT(unsigned short humid, unsigned short tempc, short lighton);
 void ADC_init();
 
 void TA0_0_IRQHandler(void){
@@ -56,11 +57,20 @@ const char font_table[][6] = {
                               {0x01, 0x01, 0x01, 0x01, 0xFE, 0x00},  /* 7 */
                               {0x76, 0x89, 0x89, 0x89, 0x76, 0x00},  /* 8 */
                               {0x0E, 0x11, 0x11, 0x11, 0xFE, 0x00},  /* 9 */
-                              {0x02, 0x05, 0x02, 0x00, 0x00, 0x00},  /*  */
+                              {0x02, 0x05, 0x02, 0x00, 0x00, 0x00},  /* ° */
                               {0x00, 0x40, 0xA0, 0x40, 0x00, 0x00},  /* . */
                               {0x88, 0x40, 0x20, 0x10, 0x88, 0x00},  /* % */
-                              {0x00, 0x00, 0x00, 0x00, 0x00, 0x00},  /* ° */
+                              {0x00, 0x00, 0x00, 0x00, 0x00, 0x00},  /*   */
                               {0x3e, 0x41, 0x41, 0x41, 0x22, 0x00},  /* C */
+                              {0x7f, 0x40, 0x40, 0x40, 0x40, 0x00},  /* L */
+                              {0x41, 0x41, 0x7f, 0x41, 0x41, 0x00},  /* I */
+                              {0x3e, 0x41, 0x49, 0x49, 0x7a, 0x00},  /* G */
+                              {0x7f, 0x08, 0x08, 0x08, 0x7f, 0x00},  /* H */
+                              {0x01, 0x01, 0x7f, 0x01, 0x01, 0x00},  /* T */
+                              {0x26, 0x49, 0x49, 0x49, 0x32, 0x00},  /* S */
+                              {0x3e, 0x41, 0x41, 0x41, 0x3e, 0x00},  /* O */
+                              {0x7f, 0x04, 0x08, 0x10, 0x7f, 0x00},   /* N */
+                              {0x7f, 0x09, 0x09, 0x09, 0x01, 0x00}  /* F */
 
 };
 /**
@@ -75,7 +85,17 @@ void main(void)
 	GLCD_init();    /* initialize the GLCD controller */
 	GLCD_clear();   /* clear display and  home the cursor */
 	ADC_init();
+	char bootup = 1;
+	short lighton = 0;
 	while (1) {
+	    if (bootup == 1)
+	    {
+	        ADC14->CTL0 |= 1; //start a conversion
+	        while (!ADC14->IFGR0); //wait until conversion is complete
+	        float result = ADC14->MEM[5]; //read conversion result
+	        light = result - 20;
+	        bootup = 0;
+	    }
 	    if (t2 >= 12){
 	        read_Packet(Packet);
             if (check_Checksum(Packet))
@@ -87,10 +107,12 @@ void main(void)
             ADC14->CTL0 |= 1; //start a conversion
             while (!ADC14->IFGR0); //wait until conversion is complete
             float result = ADC14->MEM[5]; //read conversion result
-            float rv = result / 4095 * 5;
-
+            if (result > light)
+                lighton = 1;
+            else
+                lighton = 0;
             GLCD_clear();
-            displayHT(humid, tempc);
+            displayHT(humid, tempc, lighton);
             t2 = 0;
             pass = 0;
 	    }
@@ -98,21 +120,17 @@ void main(void)
 }
 
 void ADC_init() {
-    P2->SEL0 &= 0x0; //set sel0 and sel1 to 0 for digital I/O
-        P2->SEL1 &= 0x0;
-        P2->DIR |= (BIT0|BIT1|BIT2); //set bits as output
-
-        ADC14->CTL0 = 0x00000010; //power on ADC and disable during config
-        ADC14->CTL0 |= 0x04080310; //ctl0 according to lab
-        ADC14->CTL1 = 0x00000020; //12bit resolution
-        ADC14->MCTL[5] = 0x06; //A6 input, single ended vref = AVCC
-        P4->SEL1 |= 0x80; //config P4.7 for a6
-        P4->SEL0 |= 0x80;
-        ADC14->CTL1 |= 0x00050000; //configure for memory register 5
-        ADC14->CTL0 |= 0x02; //Enable ADC14 after config
+    ADC14->CTL0 = 0x00000010; //power on ADC and disable during config
+    ADC14->CTL0 |= 0x04080310; //ctl0 according to lab
+    ADC14->CTL1 = 0x00000010; //12bit resolution
+    ADC14->MCTL[5] = 0x08; //A8 input, single ended vref = AVCC
+    P4->SEL1 |= BIT5; //config P4.7 for a6
+    P4->SEL0 |= BIT5;
+    ADC14->CTL1 |= 0x00050000; //configure for memory register 5
+    ADC14->CTL0 |= 0x02; //Enable ADC14 after config
 }
 
-void displayHT(unsigned short humid, unsigned short tempc) {
+void displayHT(unsigned short humid, unsigned short tempc, short lighton) {
     short back[5] = {0, 0, 0, 0, 0};
     int i = 4;
     short disp = 0;
@@ -151,6 +169,25 @@ void displayHT(unsigned short humid, unsigned short tempc) {
         }
     GLCD_putchar(10);
     GLCD_putchar(14);
+    GLCD_putchar(13);
+    GLCD_putchar(13);
+    GLCD_putchar(15);
+    GLCD_putchar(16);
+    GLCD_putchar(17);
+    GLCD_putchar(18);
+    GLCD_putchar(19);
+    GLCD_putchar(13);
+    GLCD_putchar(16);
+    GLCD_putchar(20);
+    GLCD_putchar(13);
+    if (lighton == 1) {
+        GLCD_putchar(21);
+        GLCD_putchar(22);
+    } else {
+        GLCD_putchar(21);
+        GLCD_putchar(23);
+        GLCD_putchar(23);
+    }
 }
 
 void start_signal(void)
