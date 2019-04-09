@@ -1,7 +1,7 @@
 #include "msp.h"
 #include "math.h"
 
-#define DATAPIN BIT4
+#define DATAPIN BIT4 //used for hum and temp sensor
 #define CE  BIT0    /* P6.0 chip select */
 #define RESET BIT6  /* P6.6 reset */
 #define DC BIT7     /* P6.7 register select */
@@ -10,13 +10,13 @@
 #define GLCD_WIDTH  84
 #define GLCD_HEIGHT 48
 
-int t2 = 0;
-unsigned char volatile timeout;
-unsigned char Packet[5];
-unsigned short tempc;
-unsigned short humid;
-int pass = 0;
-float light = 0;
+int t2 = 0; //one second timer counter
+unsigned char volatile timeout; //bool time out var
+unsigned char Packet[5]; //data packet from sensor
+unsigned short tempc; //temp data var
+unsigned short humid; //hum data var
+int pass = 0; //checksum var
+float light = 0; //bool light var
 
 void initTime1(void);
 void initTime2(void);
@@ -36,16 +36,19 @@ void SPI_write(unsigned char data);
 void displayHT(unsigned short humid, unsigned short tempc, short lighton);
 void ADC_init();
 
+//timer A0 interrupt for 1s timer
 void TA0_0_IRQHandler(void){
-    TIMER_A0->CCTL[0] &= ~BIT0;
-    t2++;
+    TIMER_A0->CCTL[0] &= ~BIT0; //resets interrupt
+    t2++; // plus 1 timer counter
 }
 
+//timer A1 interrupt for time out
 void TA1_0_IRQHandler(void){
-    TIMER_A1->CCTL[0] &= ~BIT0;
-    timeout = 1;
+    TIMER_A1->CCTL[0] &= ~BIT0; //resets interrupt
+    timeout = 1; //set timeout
 }
 
+//font_table
 const char font_table[][6] = {
                               {0x3C, 0x42, 0x81, 0x42, 0x3C, 0x00},  /* 0 */
                               {0x80, 0x82, 0xff, 0x80, 0x80, 0x00},  /* 1 */
@@ -79,42 +82,42 @@ const char font_table[][6] = {
 void main(void)
 {
 	WDT_A->CTL = WDT_A_CTL_PW | WDT_A_CTL_HOLD;		// stop watchdog timer
-	initTime1();
-	initTime2();
-	_enable_interrupts();
+	initTime1(); //init timer A0
+	initTime2(); //init timer A1
+	_enable_interrupts(); //enable interrupts
 	GLCD_init();    /* initialize the GLCD controller */
 	GLCD_clear();   /* clear display and  home the cursor */
-	ADC_init();
-	char bootup = 1;
-	short lighton = 0;
+	ADC_init();//init ADC conversion
+	char bootup = 1; //restart concision
+	short lighton = 0; //bool for photo cell
 	while (1) {
-	    if (bootup == 1)
+	    if (bootup == 1)//if fist start
 	    {
 	        ADC14->CTL0 |= 1; //start a conversion
 	        while (!ADC14->IFGR0); //wait until conversion is complete
 	        float result = ADC14->MEM[5]; //read conversion result
-	        light = result - 20;
-	        bootup = 0;
+	        light = result - 20; //threshold value for light on and off
+	        bootup = 0;//bool to say init is done
 	    }
-	    if (t2 >= 12){
-	        read_Packet(Packet);
-            if (check_Checksum(Packet))
-                pass = 1;
+	    if (t2 >= 12){//wait 1s for temp and hum
+	        read_Packet(Packet); //read data from sensor
+            if (check_Checksum(Packet)) // check checksum
+                pass = 1; //good data
             else
-                pass = 0;
-            humid = (Packet[0]<<8) | Packet[1];
-            tempc = (Packet[2]<<8) | Packet[3];
+                pass = 0; //bad data
+            humid = (Packet[0]<<8) | Packet[1]; //adds most and lest significant bits
+            tempc = (Packet[2]<<8) | Packet[3]; //adds most and leas significant bits
             ADC14->CTL0 |= 1; //start a conversion
             while (!ADC14->IFGR0); //wait until conversion is complete
             float result = ADC14->MEM[5]; //read conversion result
-            if (result > light)
-                lighton = 1;
+            if (result > light) //see if light is above threshold
+                lighton = 1; //light is on
             else
-                lighton = 0;
-            GLCD_clear();
-            displayHT(humid, tempc, lighton);
-            t2 = 0;
-            pass = 0;
+                lighton = 0; //light is off
+            GLCD_clear(); //clear display
+            displayHT(humid, tempc, lighton); //display data
+            t2 = 0; //reset timer
+            pass = 0; //reset checksum
 	    }
 	}
 }
@@ -131,47 +134,47 @@ void ADC_init() {
 }
 
 void displayHT(unsigned short humid, unsigned short tempc, short lighton) {
-    short back[5] = {0, 0, 0, 0, 0};
-    int i = 4;
-    short disp = 0;
-    for(i = 4; humid != 0; i--){
-        back[i] = humid % 10;
-        humid = (humid - (humid % 10))/10;
+    short back[5] = {0, 0, 0, 0, 0};//for reading in data
+    int i = 4; //loop var
+    short disp = 0; //to check if data has been sent to display for leading 0s
+    for(i = 4; humid != 0; i--){//reads the humidity in backwards
+        back[i] = humid % 10;//reads in least significant digit
+        humid = (humid - (humid % 10))/10; //removes least significant digit
     }
-    for (i = 0; i < 5; i++){
-        if (back[i] == 0 && disp != 0){
-            GLCD_putchar(back[i]);
-            back[i] = 0;
-        } else if (back[i] != 0) {
-            GLCD_putchar(back[i]);
-            disp = 1;
-            back[i] = 0;
+    for (i = 0; i < 5; i++){ //output 5 digits of humidity
+        if (back[i] == 0 && disp != 0){// sees if it is a leading 0
+            GLCD_putchar(back[i]); //sends 0 digit to display
+            back[i] = 0; // reset number place
+        } else if (back[i] != 0) { //sees if it is not a 0
+            GLCD_putchar(back[i]);//sends non 0 digit to display
+            disp = 1;//sets output to display to true
+            back[i] = 0;//reset number place
         }
-        if (i == 3)
-            GLCD_putchar(11);
+        if (i == 3)//sees if the next number is the decimal
+            GLCD_putchar(11); //outputs a '.'
     }
-    GLCD_putchar(12);
-    GLCD_putchar(13);
-    disp = 0;
-    for(i = 4; tempc != 0; i--){
-        back[i] = tempc % 10;
-        tempc = (tempc - (tempc % 10))/10;
+    GLCD_putchar(12); //out puts a %
+    GLCD_putchar(13); //out puts a ' '
+    disp = 0;//sets display to false
+    for(i = 4; tempc != 0; i--){//reads the temp in backwards
+        back[i] = tempc % 10; //reads in least significant digit
+        tempc = (tempc - (tempc % 10))/10; //removes least significant digit
     }
-    for (i = 0; i < 5; i++){
-            if (back[i] == 0 && disp != 0){
-                GLCD_putchar(back[i]);
-            } else if (back[i] != 0) {
-                GLCD_putchar(back[i]);
-                disp = 1;
+    for (i = 0; i < 5; i++){//output 5 digits of temp
+            if (back[i] == 0 && disp != 0){//sees if it is a leading 0
+                GLCD_putchar(back[i]); //sends 0 digit to display
+            } else if (back[i] != 0) { //sees if it is not a 0
+                GLCD_putchar(back[i]);//out puts non 0 digit
+                disp = 1; // sets displayed to true
             }
-            if (i == 3)
-                GLCD_putchar(11);
+            if (i == 3)//sees if the next number is the decimal
+                GLCD_putchar(11); //out puts a '.'
         }
-    GLCD_putchar(10);
-    GLCD_putchar(14);
-    GLCD_putchar(13);
-    GLCD_putchar(13);
-    GLCD_putchar(15);
+    GLCD_putchar(10);//outputs a '°'
+    GLCD_putchar(14);//outputs a 'c'
+    GLCD_putchar(13);//outputs a ' '
+    GLCD_putchar(13);//outputs a ' '
+    GLCD_putchar(15);//out puts "light is "
     GLCD_putchar(16);
     GLCD_putchar(17);
     GLCD_putchar(18);
@@ -180,11 +183,11 @@ void displayHT(unsigned short humid, unsigned short tempc, short lighton) {
     GLCD_putchar(16);
     GLCD_putchar(20);
     GLCD_putchar(13);
-    if (lighton == 1) {
-        GLCD_putchar(21);
+    if (lighton == 1) {//sees if light is on
+        GLCD_putchar(21);//outputs "on"
         GLCD_putchar(22);
     } else {
-        GLCD_putchar(21);
+        GLCD_putchar(21);//outputs "off"
         GLCD_putchar(23);
         GLCD_putchar(23);
     }
@@ -201,33 +204,33 @@ void start_signal(void)
 }
 
 unsigned char check_Response(){
-    timeout = 0;
-    TIMER_A1->CTL |= (BIT2 | BIT4);
-    TIMER_A1->CCR[0] = 50;
-    TIMER_A1->CCTL[0] |= BIT4;
-    while(!(P2->IN & DATAPIN) && !timeout);
-        if (timeout)
-            return 0;
+    timeout = 0; // set time out to false
+    TIMER_A1->CTL |= (BIT2 | BIT4); // reset timer to zero and start condition
+    TIMER_A1->CCR[0] = 50; //count 50 clocks 100us
+    TIMER_A1->CCTL[0] |= BIT4; //enable interrupt
+    while(!(P2->IN & DATAPIN) && !timeout); //wait for sensor to pull low or timeout condition
+        if (timeout) //checks to see if timeout
+            return 0; //return no response
         else {
-            TIMER_A1->CTL |= BIT2;
-            TIMER_A1->CCTL[0] |= BIT4;
-            timeout = 0;
-            while((P2->IN & DATAPIN) && !timeout);
-            if(timeout)
-                return 0;
+            TIMER_A1->CTL |= BIT2; //reset timer
+            TIMER_A1->CCTL[0] |= BIT4; //enable interrupt
+            timeout = 0; //reset timeout
+            while((P2->IN & DATAPIN) && !timeout); //wait for pin to go high or timeout
+            if(timeout) //checks to see if timeout
+                return 0; //returns no response
             else{
                 TIMER_A1->CCTL[0] &= ~BIT4;  // Disable timer interrupt
-                return 1;
+                return 1; //returns good response
             }
         }
 }
 
 unsigned char read_Byte(){
-    timeout = 0;
-    unsigned char num = 0;
-    unsigned char i;
-    TIMER_A1->CCTL[0] &= ~BIT4;
-    for (i=8; i>0; i--){
+    timeout = 0; // resets timeout
+    unsigned char num = 0; //init data returned from sensor
+    unsigned char i; //counter
+    TIMER_A1->CCTL[0] &= ~BIT4; //turns off interrupt
+    for (i=8; i>0; i--){ //runs for the 8 returned bytes
         while(!(P2->IN & DATAPIN)); //Wait for signal to go high
         TIMER_A1->CTL |= BIT2; //Reset timer
         TIMER_A1->CTL |= BIT4; //Reenable timer
@@ -235,31 +238,31 @@ unsigned char read_Byte(){
         while(P2->IN & DATAPIN); //Wait for signal to go low
         TIMER_A1->CTL &= ~(BIT3 | BIT4); //Halt Timer
         if (TIMER_A1->R > 4)    //40 @ 1x divider
-            num |= 1 << (i-1);
+            num |= 1 << (i-1); //sets a a one if returned from sensor
     }
-    return num;
+    return num; //returns data
 }
 
 unsigned char check_Checksum(unsigned char *data){
-    if (data[4] != (data[0] + data[1] + data[2] + data[3])){
-        return 0;
+    if (data[4] != (data[0] + data[1] + data[2] + data[3])){//valadates checksum
+        return 0; //bad data
     }
-    else return 1;
+    else return 1; //good data
 }
 
 unsigned char read_Packet(unsigned char * data)
 {
-    start_signal();
-    if (check_Response()){
+    start_signal(); //send start signal
+    if (check_Response()){ //checks sensor response
         //Cannot be done with a for loop!
-        data[0] = read_Byte();
-        data[1] = read_Byte();
-        data[2] = read_Byte();
-        data[3] = read_Byte();
-        data[4] = read_Byte();
-        return 1;
+        data[0] = read_Byte();//reads HS
+        data[1] = read_Byte();//reads HL
+        data[2] = read_Byte();//reads TS
+        data[3] = read_Byte();//reads TL
+        data[4] = read_Byte();//reads checksum
+        return 1; //returns data received
     }
-    else return 0;
+    else return 0; //returns data not received
 }
 
 void initTime1(void){
@@ -278,24 +281,24 @@ void initTime1(void){
       * bit0=0       clear capture/compare interrupt flag
       */
      TIMER_A0->CCTL[0] = BIT4;
-     TIMER_A0->CCR[0] = 0xffff;
+     TIMER_A0->CCR[0] = 0xffff; //count to max time
      //TIMER_A0->EX0 = 0x6;
-     NVIC->ISER[0] = BIT8;
-     TIMER_A0->CTL |= (BIT2 | BIT4);
+     NVIC->ISER[0] = BIT8; //set interrupt
+     TIMER_A0->CTL |= (BIT2 | BIT4); //resets and start timer A0
 }
 
 void initTime2(void){
-    TIMER_A1->CTL = (BIT7 | BIT9);
-    TIMER_A1->CCTL[0] = BIT4;
-    TIMER_A1->EX0 = 0x5;
-    NVIC->ISER[0] = 0x400;
+    TIMER_A1->CTL = (BIT7 | BIT9); //setup see timer1
+    TIMER_A1->CCTL[0] = BIT4;//setup see timer1
+    TIMER_A1->EX0 = 0x5;//prsceler of 6 for 2us time counts
+    NVIC->ISER[0] = 0x400;//sets interrupt
 }
 
 void GLCD_putchar(int c)
 {
-    int i;
-    for(i = 0; i < 6; i++)
-        GLCD_data_write(font_table[c][i]);
+    int i; //look var
+    for(i = 0; i < 6; i++) //sends 6 hex codes
+        GLCD_data_write(font_table[c][i]); //sends data to SPI
 }
 
 void GLCD_setCursor(unsigned char x, unsigned char y)
